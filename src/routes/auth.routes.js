@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { userRegisterValidation } from "../validators/index.js";
+import { validate } from "../middlewares/validator.middleware.js";
 import {
     register,
     verificationEmail,
@@ -16,9 +18,10 @@ import {
 const router = Router();
 
 
-router.route("/register").post(register);
-router.route("/verification-email").post(verificationEmail);
-router.route("/resend-verification-email").post(resendVerificationEmail);
+router.route("/register").post(userRegisterValidation(), validate, register);
+
+router.route("/verify-email/:token").post(verificationEmail);
+router.route("/resend-verify-email").post(resendVerificationEmail);
 router.route("/login").post(login);
 router.route("/forgot-password").post(forgotPassword);
 router.route("/reset-forgot-password").post(resetForgotPassword);
