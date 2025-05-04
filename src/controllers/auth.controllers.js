@@ -4,7 +4,7 @@ import { asyncHandler } from "../utils/async-handler.js";
 import { User } from "../models/User.model.js";
 import { ApiError } from "../utils/api-error.js";
 import { ApiResponse } from "../utils/api-response.js";
-import { sendMail, emailVerificationMail } from "../utils/mail.js";
+import { sendMail, emailVerificationMail, forgotPasswordMail } from "../utils/mail.js";
 import { UserLoginTypes } from "../constants.js";
 
 
@@ -52,7 +52,7 @@ const register = asyncHandler(async (req, res) => {
             )
         })
     } catch (error) {
-        console.log("Sending Email Error: ", error)
+        console.log("Email verification Error: ", error)
         return res.status(500).json(
             new ApiError(500, "verification email not sent due to internal server error", []).toJSON()
         )
@@ -146,8 +146,6 @@ const login = asyncHandler(async (req, res) => {
     const refreshToken = user.generateRefreshToken();
     user.refreshToken = refreshToken;
     await user.save();
-    console.log(refreshToken)
-    console.log(user)
 
     // save access and refresh token in cookies
     const options = {
@@ -195,8 +193,6 @@ const getRefreshToken = asyncHandler(async (req, res) => {
         const refreshToken = user.generateRefreshToken();
         user.refreshToken = refreshToken;
         await user.save();
-        console.log(refreshToken)
-        console.log(user)
 
         // save access and refresh token in cookies
         const options = {
@@ -220,43 +216,195 @@ const getRefreshToken = asyncHandler(async (req, res) => {
 
 
 const forgotPassword = asyncHandler(async (req, res) => {
+    // get email from user request
+    const { email } = req.body;
+
+    // find user based on email
+    const user = await User.findOne({ email })
+    if (!user) {
+        return res.status(400).json(
+            new ApiError(400, "user not exist or registered with this email", []).toJSON()
+        )
+    }
+
+    // create email verification token and expiry & save user
+    const { unhashedToken, hashedToken, tokenExpiry } = user.generateRandomToken();
+    user.forgotPasswordToken = hashedToken;
+    user.forgotPasswordExpiry = tokenExpiry;
+    await user.save();
+
+    // send verification email
+    try {
+        await sendMail({
+            email: user.email,
+            subject: "Reset Yout Password",
+            mailGenContent: forgotPasswordMail(
+                user.username,
+                `${process.env.BASE_URI}/api/v1/auth/reset-password/${unhashedToken}`
+            )
+        })
+    } catch (error) {
+        console.log("Forgot password Email Error: ", error)
+        return res.status(500).json(
+            new ApiError(500, "verification email not sent due to internal server error", []).toJSON()
+        )
+    }
+
+    // send success response
     return res.status(200).json(
-        new ApiResponse(200, { message: "Password reset link successfully sent" }, "Successfully get response")
+        new ApiResponse(200, { message: "Password reset link successfully sent to your email." }, "Successfully get response")
     )
 });
 
 
 const resetForgotPassword = asyncHandler(async (req, res) => {
+    // get token from url, new password and confirm password and validate
+    const { token } = req.params;
+    const { newPassword, confirmPassword } = req.body;
+    if (!token) {
+        return res.status(400).json(
+            new ApiError(400, "Reset Password Token is missing", []).toJSON()
+        )
+    }
+    if (newPassword !== confirmPassword) {
+        return res.status(400).json(
+            new ApiError(400, "New Passwords are not matching", []).toJSON()
+        )
+    }
+
+    // hash token for comparison
+    const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+    // find user based on hashed token
+    const user = await User.findOne({
+        forgotPasswordToken: hashedToken,
+        forgotPasswordExpiry: { $gt: Date.now() }
+    })
+    if (!user) {
+        return res.status(400).json(
+            new ApiError(400, "Token is expired or invalid", []).toJSON()
+        )
+    }
+
+    // update user password
+    user.forgotPasswordToken = undefined;
+    user.forgotPasswordExpiry = undefined;
+    user.password = confirmPassword;
+    await user.save();
+
+    // send success response
     return res.status(200).json(
-        new ApiResponse(200, { message: "Password successfully reset" }, "Successfully get response")
+        new ApiResponse(200, { message: "Password reset successfully" }, "Successfully get response")
     )
 });
 
 
 const getUserInfo = asyncHandler(async (req, res) => {
+    // directly send user info from req to res
     return res.status(200).json(
-        new ApiResponse(200, { message: "User successfully fetched" }, "Successfully get response")
-    )
-});
-
-
-const logout = asyncHandler(async (req, res) => {
-    return res.status(200).json(
-        new ApiResponse(200, { message: "User successfully logged out" }, "Successfully get response")
+        new ApiResponse(200, req.user, "Successfully get response")
     )
 });
 
 
 const changeCurrentPassword = asyncHandler(async (req, res) => {
+    // get old password, new password and confirm password and validate
+    const { oldPassword, newPassword, confirmPassword } = req.body;
+    if (newPassword !== confirmPassword) {
+        return res.status(400).json(
+            new ApiError(400, "New Passwords are not matching", []).toJSON()
+        )
+    }
+
+    // get user and check old password is correct or not
+    const user = await User.findById(req.user._id);
+    const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
+    if (!isPasswordCorrect) {
+        return res.status(400).json(
+            new ApiError(400, "Old Password is incorrect", []).toJSON()
+        )
+    }
+
+    // update user password
+    user.password = confirmPassword;
+    await user.save();
+
+    // send success response
     return res.status(200).json(
         new ApiResponse(200, { message: "Password successfully changed" }, "Successfully get response")
     )
 });
 
 
-const resendVerificationEmail = asyncHandler(async (req, res) => {
+const logout = asyncHandler(async (req, res) => {
+    // update user refresh token
+    await User.findByIdAndUpdate(
+        req.user._id,
+        { $set: { refreshToken: '' } },
+        { new: true }
+    );
+
+    // clear cookies
+    const options = {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+    };
+    res.clearCookie("accessToken", options)
+    res.clearCookie("refreshToken", options)
+
+    // send success response
     return res.status(200).json(
-        new ApiResponse(200, { message: "Verification email successfully sent" }, "Successfully get response")
+        new ApiResponse(200, { message: "User logged out" }, "Successfully get response")
+    )
+});
+
+
+const resendVerificationEmail = asyncHandler(async (req, res) => {
+    // get user 
+    const user = await User.findById(req.user._id);
+    if (!user) {
+        return res.status(409).json(
+            new ApiError(409, "User does not exists", []).toJSON()
+        )
+    }
+
+    // check if email is already verified
+    if (user.isEmailVerified) {
+        return res.status(409).json(
+            new ApiError(409, "Email is already verified!", []).toJSON()
+        )
+    }
+    
+    // create email verification token and expiry & save user
+    const { unhashedToken, hashedToken, tokenExpiry } = user.generateRandomToken();
+    user.emailVerificationToken = hashedToken;
+    user.emailVerificationExpiry = tokenExpiry;
+    await user.save();
+
+    // send verification email
+    try {
+        await sendMail({
+            email: user.email,
+            subject: "Verify your Email",
+            mailGenContent: emailVerificationMail(
+                user.username,
+                `${process.env.BASE_URI}/api/v1/auth/verify-email/${unhashedToken}`
+            )
+        })
+    } catch (error) {
+        console.log("Email verification Error: ", error)
+        return res.status(500).json(
+            new ApiError(500, "verification email not sent due to internal server error", []).toJSON()
+        )
+    }
+
+    // send success response
+    return res.status(200).json(
+        new ApiResponse(
+            200,
+            { message: "Verification email has been sent." },
+            "Successfully get response"
+        )
     )
 });
 

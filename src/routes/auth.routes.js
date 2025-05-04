@@ -1,7 +1,13 @@
 import { Router } from "express";
-import { userRegisterValidation, userLoginValidation } from "../validators/index.js";
 import { validate } from "../middlewares/validator.middleware.js";
-import { userIsloggedIn } from "../middlewares/auth.middleware.js";
+import { isloggedIn } from "../middlewares/auth.middleware.js";
+import {
+    userRegisterValidation,
+    userLoginValidation,
+    userForgotPasswordValidation,
+    userResetForgotPasswordValidation,
+    userChangePasswordValidation
+} from "../validators/index.js";
 import {
     register,
     verificationEmail,
@@ -23,12 +29,12 @@ router.route("/register").post(userRegisterValidation(), validate, register);
 router.route("/verify-email/:token").post(verificationEmail);
 router.route("/login").post(userLoginValidation(), validate, login);
 router.route("/refresh-token").get(getRefreshToken);
-router.route("/forgot-password").post(forgotPassword);
-router.route("/reset-forgot-password").post(resetForgotPassword);
+router.route("/forgot-password").post(userForgotPasswordValidation(), validate, forgotPassword);
+router.route("/reset-password/:token").post(userResetForgotPasswordValidation(), validate, resetForgotPassword);
 
-router.route("/resend-verify-email").post(resendVerificationEmail);
-router.route("/user-info").get(getUserInfo);
-router.route("/logout").get(logout);
-router.route("/change-current-password").post(changeCurrentPassword);
+router.route("/user-info").get(isloggedIn, getUserInfo);
+router.route("/change-password").post(userChangePasswordValidation(), validate, isloggedIn, changeCurrentPassword);
+router.route("/logout").get(isloggedIn, logout);
+router.route("/resend-verify-email").post(isloggedIn,resendVerificationEmail);
 
 export default router;
