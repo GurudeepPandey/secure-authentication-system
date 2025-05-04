@@ -19,6 +19,28 @@ const userRegisterValidation = () => {
     ]
 }
 
+const userLoginValidation = () => {
+    return [
+        body("email")
+            .optional()
+            .isEmail().withMessage("Email is invalid")
+            .trim()
+            .notEmpty().withMessage("Email is required"),
+        body("username")
+            .optional()
+            .trim()
+            .notEmpty().withMessage("Username is required")
+            .isLength({ min: 3 }).withMessage("Username must be at least 3 characters long")
+            .isLength({ max: 20 }).withMessage("Username must be at most 20 characters long"),
+        body("password")
+            .trim()
+            .notEmpty().withMessage("Password is required")
+            .isLength({ min: 6 }).withMessage("Password must be at least 6 characters long")
+            .isLength({ max: 35 }).withMessage("Password must be at most 35 characters long")
+    ]
+}
+
 export {
-    userRegisterValidation
+    userRegisterValidation,
+    userLoginValidation
 }
